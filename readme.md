@@ -126,7 +126,7 @@ To use TRT for inference:
 python scripts/run_demo_tensorrt.py --onnx_dir output/ --left_file assets/left.png --right_file assets/right.png --intrinsic_file assets/K.txt --out_dir output/ --remove_invisible 0 --denoise_cloud 1  --get_pc 1 --zfar 100
 ```
 
-# Internet-Scale Psuedo-Labeling
+# Internet-Scale Pseudo-Labeling
 Real-world data offers greater diversity and realism than synthetic data. However, obtaining real stereo images with ground-truth metric depth annotation is notoriously difficult. To address this challenge, we propose an automatic data curation pipeline to generate pseudo-labels on internet-scale stereo images from [Stereo4D](https://stereo4d.github.io/) dataset. **Top:** Pseudo-labeling pipeline on in-the-wild internet stereo data. **Bottom:** Visualization of our generated pseudo-labels.
 
 <p align="center">
@@ -156,4 +156,4 @@ $\color{red}{\textsf{This dataset will be released soon by (03/11).}}$
 Please contact [Bowen Wen](https://wenbowen123.github.io/) for questions and commercial inquiries.
 
 # Acknowledgement
-We would like to thank Xutong Ren, Yonggan Fu, Saurav Muralidharan, Han Cai, Pavlo Molchanov, Yu Wang, Varun Praveen, Joseph Aribido and Jun Gao for their insightful early discussions for this project. We would also like to thank NVIDIA Isaac and TAO teams for their engineering support and valuable discussions. Thanks to the authors of [FoundationStereo](https://github.com/NVlabs/FoundationStereo), [Selective-IGEV](https://github.com/Windsrain/Selective-Stereo), [Stereo4D](https://github.com/Stereo4d/stereo4d-code) and [RAFT-Stereo](https://github.com/princeton-vl/RAFT-Stereo) for their code release. Finally, thanks to CVPR reviewers and AC for their appreciation of this work and constructive feedback.
+We would like to thank Xutong Ren, Karsten Patzwaldt, Yonggan Fu, Saurav Muralidharan, Han Cai, Pavlo Molchanov, Yu Wang, Varun Praveen, Joseph Aribido and Jun Gao for their insightful early discussions for this project. We would also like to thank NVIDIA Isaac and TAO teams for their engineering support and valuable discussions. Thanks to the authors of [FoundationStereo](https://github.com/NVlabs/FoundationStereo), [Selective-IGEV](https://github.com/Windsrain/Selective-Stereo), [Stereo4D](https://github.com/Stereo4d/stereo4d-code) and [RAFT-Stereo](https://github.com/princeton-vl/RAFT-Stereo) for their code release. Finally, thanks to CVPR reviewers and AC for their appreciation of this work and constructive feedback.
