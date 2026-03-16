@@ -3,7 +3,7 @@ code_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(f'{code_dir}/../')
 from omegaconf import OmegaConf
 from core.utils.utils import InputPadder
-import argparse, torch, imageio, logging, yaml
+import argparse, torch, imageio, logging, yaml, time
 import numpy as np
 from Utils import (
     set_logging_format, set_seed, vis_disparity,
@@ -16,10 +16,10 @@ import cv2
 if __name__=="__main__":
   code_dir = os.path.dirname(os.path.realpath(__file__))
   parser = argparse.ArgumentParser()
-  parser.add_argument('--onnx_dir', default=f'{code_dir}/output', type=str)
-  parser.add_argument('--left_file', default=f'{code_dir}/../assets/left.png', type=str)
-  parser.add_argument('--right_file', default=f'{code_dir}/../assets/right.png', type=str)
-  parser.add_argument('--intrinsic_file', default=f'{code_dir}/../assets/K.txt', type=str, help='camera intrinsic matrix and baseline file')
+  parser.add_argument('--onnx_dir', default=f'{code_dir}/../output/480x864', type=str)
+  parser.add_argument('--left_file', default=f'{code_dir}/../demo_data/left.png', type=str, help='fallback: ../tinynav/tests/data/left.png')
+  parser.add_argument('--right_file', default=f'{code_dir}/../demo_data/right.png', type=str, help='fallback: ../tinynav/tests/data/right.png')
+  parser.add_argument('--intrinsic_file', default=f'{code_dir}/../demo_data/K.txt', type=str, help='camera intrinsic matrix and baseline file')
   parser.add_argument('--out_dir', default='/home/bowen/debug/stereo_output', type=str)
   parser.add_argument('--remove_invisible', default=1, type=int)
   parser.add_argument('--denoise_cloud', default=1, type=int)
@@ -27,25 +27,49 @@ if __name__=="__main__":
   parser.add_argument('--denoise_radius', type=float, default=0.03, help='radius to use for outlier removal')
   parser.add_argument('--get_pc', type=int, default=1, help='save point cloud output')
   parser.add_argument('--zfar', type=float, default=100, help="max depth to include in point cloud")
+  parser.add_argument('--benchmark', action='store_true', help='run speed benchmark (warmup + iterations, no GUI)')
+  parser.add_argument('--benchmark_warmup', type=int, default=15, help='warmup iterations for benchmark')
+  parser.add_argument('--benchmark_total', type=int, default=30, help='total iterations for benchmark')
   args = parser.parse_args()
 
   set_logging_format()
   set_seed(0)
   torch.autograd.set_grad_enabled(False)
 
-  os.system(f'rm -rf {args.out_dir} && mkdir -p {args.out_dir}')
+  if not args.benchmark:
+    os.system(f'rm -rf {args.out_dir} && mkdir -p {args.out_dir}')
 
-  with open(f'{os.path.dirname(args.onnx_dir)}/onnx.yaml', 'r') as ff:
-    cfg:dict = yaml.safe_load(ff)
+  # Load config: try onnx_dir/onnx.yaml first, then dirname(onnx_dir)/onnx.yaml
+  cfg_path = f'{args.onnx_dir}/onnx.yaml'
+  if not os.path.isfile(cfg_path):
+    cfg_path = f'{os.path.dirname(args.onnx_dir)}/onnx.yaml'
+  with open(cfg_path, 'r') as f:
+    cfg:dict = yaml.safe_load(f)
+  if 'image_size' not in cfg:
+    name = os.path.basename(args.onnx_dir.rstrip('/'))
+    if 'x' in name:
+      parts = name.split('x')
+      if len(parts)==2 and parts[0].isdigit() and parts[1].isdigit():
+        cfg['image_size'] = [int(parts[0]), int(parts[1])]
+    if 'image_size' not in cfg:
+      cfg['image_size'] = [480, 864]
   for k in args.__dict__:
     if args.__dict__[k] is not None:
       cfg[k] = args.__dict__[k]
+  do_benchmark = cfg.get('benchmark', False)
+  benchmark_warmup = cfg.get('benchmark_warmup', 15)
+  benchmark_total = cfg.get('benchmark_total', 30)
   args = OmegaConf.create(cfg)
   logging.info(f"args:\n{args}")
   model = TrtRunner(args, args.onnx_dir+'/feature_runner.engine', args.onnx_dir+'/post_runner.engine')
 
-  img0 = imageio.imread(args.left_file)
-  img1 = imageio.imread(args.right_file)
+  if do_benchmark and not os.path.isfile(args.left_file):
+    H_cfg, W_cfg = args.image_size[0], args.image_size[1]
+    img0 = np.random.randint(0, 256, (H_cfg, W_cfg, 3), dtype=np.uint8)
+    img1 = np.random.randint(0, 256, (H_cfg, W_cfg, 3), dtype=np.uint8)
+  else:
+    img0 = imageio.imread(args.left_file)
+    img1 = imageio.imread(args.right_file)
   if len(img0.shape)==2:
     img0 = np.tile(img0[...,None], (1,1,3))
     img1 = np.tile(img1[...,None], (1,1,3))
@@ -63,11 +87,29 @@ if __name__=="__main__":
   img0_ori = img0.copy()
   img1_ori = img1.copy()
   logging.info(f"img0: {img0.shape}")
-  imageio.imwrite(f'{args.out_dir}/left.png', img0)
-  imageio.imwrite(f'{args.out_dir}/right.png', img1)
+  if not do_benchmark:
+    imageio.imwrite(f'{args.out_dir}/left.png', img0)
+    imageio.imwrite(f'{args.out_dir}/right.png', img1)
 
   img0 = torch.as_tensor(img0).cuda().float()[None].permute(0,3,1,2)
   img1 = torch.as_tensor(img1).cuda().float()[None].permute(0,3,1,2)
+
+  if do_benchmark:
+    logging.info(f"Benchmark: image {H}x{W}, warmup={benchmark_warmup}, total={benchmark_total}")
+    times = []
+    for i in range(benchmark_total):
+      torch.cuda.synchronize()
+      t0 = time.perf_counter()
+      disp = model.forward(img0, img1)
+      torch.cuda.synchronize()
+      elapsed = time.perf_counter() - t0
+      times.append(elapsed)
+      logging.info(f"Iter {i:2d}: {elapsed*1000:.1f} ms {'(warmup)' if i < benchmark_warmup else ''}")
+    measure_times = times[benchmark_warmup:]
+    avg_ms = np.mean(measure_times) * 1000
+    std_ms = np.std(measure_times) * 1000
+    logging.info(f"TensorRT speed average (after warmup): {avg_ms:.1f} ± {std_ms:.1f} ms over {len(measure_times)} iters")
+    sys.exit(0)
 
   logging.info(f"Start forward, 1st time run can be slow due to compilation")
   disp = model.forward(img0, img1)

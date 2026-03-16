@@ -15,7 +15,6 @@ from core.submodule import (
     build_gwc_volume_optimized_pytorch1, build_gwc_volume_optimized_pytorch1,
     build_concat_volume_optimized_pytorch1, build_concat_volume_optimized_pytorch,
 )
-from core.gwc_custom_op import build_gwc_volume_custom
 from core.utils.utils import InputPadder
 import Utils as U
 import time
@@ -373,28 +372,6 @@ class TrtPostRunner(nn.Module):
       disp_up = self.upsample_disp(disp.to(self.dtype), mask_feat_4.to(self.dtype), stem_2x.to(self.dtype))
 
     return disp_up
-
-
-class TrtFullRunner(nn.Module):
-  """Full model: feature -> build_gwc_volume (custom op) -> post. Exports as single ONNX with BuildGwcVolume node."""
-  def __init__(self, model):
-    super().__init__()
-    self.feature_runner = TrtFeatureRunner(model)
-    self.post_runner = TrtPostRunner(model)
-    self.max_disp = model.args.max_disp
-    self.cv_group = model.cv_group
-
-  def forward(self, left, right):
-    feat = self.feature_runner(left, right)
-    features_left_04, features_left_08, features_left_16, features_left_32, features_right_04, stem_2x = feat
-    gwc_volume = build_gwc_volume_custom(
-        features_left_04, features_right_04,
-        self.max_disp // 4, self.cv_group, normalize=True,
-    )
-    return self.post_runner(
-        features_left_04, features_left_08, features_left_16, features_left_32,
-        features_right_04, stem_2x, gwc_volume,
-    )
 
 
 class TrtRunner(nn.Module):
