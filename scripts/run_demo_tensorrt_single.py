@@ -1,6 +1,7 @@
-import os,sys
+import os, sys
 code_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(f'{code_dir}/../')
+
 from omegaconf import OmegaConf
 from core.utils.utils import InputPadder
 import argparse, torch, imageio.v2 as imageio, logging, yaml, time
@@ -9,27 +10,37 @@ from Utils import (
     set_logging_format, set_seed, vis_disparity,
     depth2xyzmap, toOpen3dCloud, o3d,
 )
-from core.foundation_stereo import TrtRunner
+from core.foundation_stereo import TrtSingleRunner
 import cv2
 
 
 if __name__=="__main__":
   code_dir = os.path.dirname(os.path.realpath(__file__))
   parser = argparse.ArgumentParser()
-  parser.add_argument('--onnx_dir', default=f'{code_dir}/../output/480x864', type=str)
-  parser.add_argument('--left_file', default=f'{code_dir}/../demo_data/left.png', type=str, help='fallback: ../tinynav/tests/data/left.png')
-  parser.add_argument('--right_file', default=f'{code_dir}/../demo_data/right.png', type=str, help='fallback: ../tinynav/tests/data/right.png')
-  parser.add_argument('--intrinsic_file', default=f'{code_dir}/../demo_data/K.txt', type=str, help='camera intrinsic matrix and baseline file')
-  parser.add_argument('--out_dir', default='/home/bowen/debug/stereo_output', type=str)
+  parser.add_argument('--engine', default=f'{code_dir}/../output/480x864/foundation_stereo.engine', type=str)
+  parser.add_argument('--plugin_lib', default=f'{code_dir}/../plugins/gwc_plugin_cpp/build/libGwcVolumePlugin.so', type=str,
+                      help='Path to GwcVolume TensorRT plugin .so (for deserialization)')
+  parser.add_argument('--onnx_dir', default=f'{code_dir}/../output/480x864', type=str,
+                      help='Directory containing onnx.yaml config (image_size, etc.)')
+  parser.add_argument('--left_file', default=f'{code_dir}/../demo_data/left.png', type=str)
+  parser.add_argument('--right_file', default=f'{code_dir}/../demo_data/right.png', type=str)
+  parser.add_argument('--intrinsic_file', default=f'{code_dir}/../demo_data/K.txt', type=str,
+                      help='camera intrinsic matrix and baseline file')
+  parser.add_argument('--out_dir', default=f'{code_dir}/../output/trt_single_inference_480x864', type=str)
   parser.add_argument('--remove_invisible', default=1, type=int)
   parser.add_argument('--denoise_cloud', default=1, type=int)
-  parser.add_argument('--denoise_nb_points', type=int, default=30, help='number of points to consider for radius outlier removal')
-  parser.add_argument('--denoise_radius', type=float, default=0.03, help='radius to use for outlier removal')
+  parser.add_argument('--denoise_nb_points', type=int, default=30,
+                      help='number of points to consider for radius outlier removal')
+  parser.add_argument('--denoise_radius', type=float, default=0.03,
+                      help='radius to use for outlier removal')
   parser.add_argument('--get_pc', type=int, default=1, help='save point cloud output')
   parser.add_argument('--zfar', type=float, default=100, help="max depth to include in point cloud")
-  parser.add_argument('--benchmark', action='store_true', help='run speed benchmark (warmup + iterations, no GUI)')
-  parser.add_argument('--benchmark_warmup', type=int, default=15, help='warmup iterations for benchmark')
-  parser.add_argument('--benchmark_total', type=int, default=30, help='total iterations for benchmark')
+  parser.add_argument('--benchmark', action='store_true',
+                      help='run speed benchmark (warmup + iterations, no GUI)')
+  parser.add_argument('--benchmark_warmup', type=int, default=15,
+                      help='warmup iterations for benchmark')
+  parser.add_argument('--benchmark_total', type=int, default=30,
+                      help='total iterations for benchmark')
   args = parser.parse_args()
 
   set_logging_format()
@@ -39,7 +50,7 @@ if __name__=="__main__":
   if not args.benchmark:
     os.system(f'rm -rf {args.out_dir} && mkdir -p {args.out_dir}')
 
-  # Load config: try onnx_dir/onnx.yaml first, then dirname(onnx_dir)/onnx.yaml
+  # Load config from onnx.yaml to get image_size and model args (max_disp, etc.)
   cfg_path = f'{args.onnx_dir}/onnx.yaml'
   if not os.path.isfile(cfg_path):
     cfg_path = f'{os.path.dirname(args.onnx_dir)}/onnx.yaml'
@@ -51,8 +62,8 @@ if __name__=="__main__":
       parts = name.split('x')
       if len(parts)==2 and parts[0].isdigit() and parts[1].isdigit():
         cfg['image_size'] = [int(parts[0]), int(parts[1])]
-    if 'image_size' not in cfg:
-      cfg['image_size'] = [480, 864]
+  if 'image_size' not in cfg:
+    cfg['image_size'] = [480, 864]
   for k in args.__dict__:
     if args.__dict__[k] is not None:
       cfg[k] = args.__dict__[k]
@@ -61,7 +72,12 @@ if __name__=="__main__":
   benchmark_total = cfg.get('benchmark_total', 30)
   args = OmegaConf.create(cfg)
   logging.info(f"args:\n{args}")
-  model = TrtRunner(args, args.onnx_dir+'/feature_runner.engine', args.onnx_dir+'/post_runner.engine')
+
+  model = TrtSingleRunner(
+      args,
+      engine_path=args.engine,
+      plugin_lib=args.plugin_lib,
+  )
 
   if do_benchmark and not os.path.isfile(args.left_file):
     H_cfg, W_cfg = args.image_size[0], args.image_size[1]
@@ -95,7 +111,7 @@ if __name__=="__main__":
   img1 = torch.as_tensor(img1).cuda().float()[None].permute(0,3,1,2)
 
   if do_benchmark:
-    logging.info(f"Benchmark: image {H}x{W}, warmup={benchmark_warmup}, total={benchmark_total}")
+    logging.info(f"Benchmark (single engine): image {H}x{W}, warmup={benchmark_warmup}, total={benchmark_total}")
     times = []
     for i in range(benchmark_total):
       torch.cuda.synchronize()
@@ -108,10 +124,10 @@ if __name__=="__main__":
     measure_times = times[benchmark_warmup:]
     avg_ms = np.mean(measure_times) * 1000
     std_ms = np.std(measure_times) * 1000
-    logging.info(f"TensorRT speed average (after warmup): {avg_ms:.1f} ± {std_ms:.1f} ms over {len(measure_times)} iters")
+    logging.info(f"TensorRT single-engine speed average (after warmup): {avg_ms:.1f} ± {std_ms:.1f} ms over {len(measure_times)} iters")
     sys.exit(0)
 
-  logging.info(f"Start forward, 1st time run can be slow due to compilation")
+  logging.info(f"Start forward (single engine), 1st time run can be slow due to CUDA graph capture")
   disp = model.forward(img0, img1)
   logging.info("forward done")
   disp = disp.data.cpu().numpy().reshape(H,W).clip(0, None) * 1/fx
@@ -124,8 +140,6 @@ if __name__=="__main__":
   imageio.imwrite(f'{args.out_dir}/disp_vis.png', vis)
   s = 1280/vis.shape[1]
   resized_vis = cv2.resize(vis, (int(vis.shape[1]*s), int(vis.shape[0]*s)))
-  #cv2.imshow('disp', resized_vis[:,:,::-1])
-  #cv2.waitKey(0)
 
   if args.remove_invisible:
     yy,xx = np.meshgrid(np.arange(disp.shape[0]), np.arange(disp.shape[1]), indexing='ij')
@@ -169,3 +183,4 @@ if __name__=="__main__":
     ctr.set_up([0, -1, 0])
     vis.run()
     vis.destroy_window()
+

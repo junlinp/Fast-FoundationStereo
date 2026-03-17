@@ -15,6 +15,7 @@ from core.submodule import (
     build_gwc_volume_optimized_pytorch1, build_gwc_volume_optimized_pytorch1,
     build_concat_volume_optimized_pytorch1, build_concat_volume_optimized_pytorch,
 )
+from core.gwc_custom_op import build_gwc_volume_custom
 from core.utils.utils import InputPadder
 import Utils as U
 import time
@@ -374,6 +375,28 @@ class TrtPostRunner(nn.Module):
     return disp_up
 
 
+class TrtFullRunner(nn.Module):
+  """Full model: feature -> build_gwc_volume (custom op) -> post. Exports as single ONNX with BuildGwcVolume node."""
+  def __init__(self, model):
+    super().__init__()
+    self.feature_runner = TrtFeatureRunner(model)
+    self.post_runner = TrtPostRunner(model)
+    self.max_disp = model.args.max_disp
+    self.cv_group = model.cv_group
+
+  def forward(self, left, right):
+    feat = self.feature_runner(left, right)
+    features_left_04, features_left_08, features_left_16, features_left_32, features_right_04, stem_2x = feat
+    gwc_volume = build_gwc_volume_custom(
+        features_left_04, features_right_04,
+        self.max_disp // 4, self.cv_group, normalize=True,
+    )
+    return self.post_runner(
+        features_left_04, features_left_08, features_left_16, features_left_32,
+        features_right_04, stem_2x, gwc_volume,
+    )
+
+
 class TrtRunner(nn.Module):
   def __init__(self, args, feature_runner_engine_path, post_runner_engine_path):
     super().__init__()
@@ -445,3 +468,70 @@ class TrtRunner(nn.Module):
     out = self.run_trt(self.post_engine, self.post_context, post_inputs)
     disp = out['disp']
     return disp
+
+
+class TrtSingleRunner(nn.Module):
+  """Single TensorRT engine runner for foundation_stereo.engine with BuildGwcVolume plugin baked in."""
+  def __init__(self, args, engine_path, plugin_lib=None):
+    super().__init__()
+    import tensorrt as trt
+    import ctypes
+    self.args = args
+    self.trt_logger = trt.Logger(trt.Logger.WARNING)
+    if plugin_lib is not None:
+      ctypes.CDLL(plugin_lib)
+    with open(engine_path, 'rb') as f:
+      engine_data = f.read()
+    runtime = trt.Runtime(self.trt_logger)
+    self.engine = runtime.deserialize_cuda_engine(engine_data)
+    self.context = self.engine.create_execution_context()
+
+  def trt_dtype_to_torch(self, dt):
+    import tensorrt as trt
+    if dt==trt.DataType.FLOAT: return torch.float32
+    if dt==trt.DataType.HALF: return torch.float16
+    if dt==trt.DataType.BF16: return torch.bfloat16
+    if dt==trt.DataType.INT32: return torch.int32
+    if dt==trt.DataType.INT8: return torch.int8
+    if dt==trt.DataType.BOOL: return torch.bool
+    raise RuntimeError(f"Unsupported TRT dtype: {dt}")
+
+  def get_io_tensor_names(self, engine, mode):
+    import tensorrt as trt
+    names = []
+    n = engine.num_io_tensors
+    for i in range(n):
+      name = engine.get_tensor_name(i)
+      if engine.get_tensor_mode(name)==mode:
+        names.append(name)
+    return names
+
+  def run_trt(self, inputs_by_name:dict):
+    import tensorrt as trt
+    engine = self.engine
+    context = self.context
+    for name, tensor in list(inputs_by_name.items()):
+      expected_dtype = self.trt_dtype_to_torch(engine.get_tensor_dtype(name))
+      if tensor.dtype != expected_dtype:
+        inputs_by_name[name] = tensor.to(expected_dtype)
+      if not inputs_by_name[name].is_contiguous():
+        inputs_by_name[name] = inputs_by_name[name].contiguous()
+      context.set_input_shape(name, tuple(inputs_by_name[name].shape))
+    outputs = {}
+    out_names = [n for n in self.get_io_tensor_names(engine, trt.TensorIOMode.OUTPUT)]
+    for name in out_names:
+      shp = tuple(context.get_tensor_shape(name))
+      dtype = self.trt_dtype_to_torch(engine.get_tensor_dtype(name))
+      outputs[name] = torch.empty(shp, device='cuda', dtype=dtype)
+    for name, tensor in inputs_by_name.items():
+      context.set_tensor_address(name, int(tensor.data_ptr()))
+    for name, tensor in outputs.items():
+      context.set_tensor_address(name, int(tensor.data_ptr()))
+    stream = torch.cuda.current_stream().cuda_stream
+    ok = context.execute_async_v3(stream)
+    assert ok
+    return outputs
+
+  def forward(self, image1, image2):
+    out = self.run_trt({'left': image1, 'right': image2})
+    return out['disp']
