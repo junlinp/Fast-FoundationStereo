@@ -346,8 +346,8 @@ class TrtPostRunner(nn.Module):
 
     # Init disp from geometry encoding volume (keep 5D until disparity_regression for ONNX If shape match)
     logits = self.classifier(comb_volume)  # (B, 1, D, H, W)
-    prob = F.softmax(logits, dim=1)
-    init_disp = disparity_regression(prob.squeeze(1), self.args.max_disp//4)
+    prob = F.softmax(logits.squeeze(1), dim=1)
+    init_disp = disparity_regression(prob, self.args.max_disp//4)
 
     cnet_list = self.cnet(features_left[0], features_left[1], features_left[2])
     cnet_list = list(cnet_list)
@@ -383,13 +383,14 @@ class TrtFullRunner(nn.Module):
     self.post_runner = TrtPostRunner(model)
     self.max_disp = model.args.max_disp
     self.cv_group = model.cv_group
+    self.gwc_normalize = getattr(model.args, 'normalize', True)
 
   def forward(self, left, right):
     feat = self.feature_runner(left, right)
     features_left_04, features_left_08, features_left_16, features_left_32, features_right_04, stem_2x = feat
     gwc_volume = build_gwc_volume_custom(
         features_left_04, features_right_04,
-        self.max_disp // 4, self.cv_group, normalize=True,
+        self.max_disp // 4, self.cv_group, normalize=self.gwc_normalize,
     )
     return self.post_runner(
         features_left_04, features_left_08, features_left_16, features_left_32,
@@ -414,6 +415,7 @@ class TrtRunner(nn.Module):
     self.post_context = self.post_engine.create_execution_context()
     self.max_disp = args.max_disp
     self.cv_group = args.get('cv_group', 8)
+    self.gwc_normalize = args.get('normalize', True)
 
   def trt_dtype_to_torch(self, dt):
     import tensorrt as trt
@@ -457,7 +459,7 @@ class TrtRunner(nn.Module):
   def forward(self, image1, image2):
     import tensorrt as trt
     feat_out = self.run_trt(self.feature_engine, self.feature_context, {'left': image1, 'right': image2})
-    gwc_volume = build_gwc_volume_optimized_pytorch1(feat_out['features_left_04'].half(), feat_out['features_right_04'].half(), self.args.max_disp//4, self.cv_group)
+    gwc_volume = build_gwc_volume_optimized_pytorch1(feat_out['features_left_04'].half(), feat_out['features_right_04'].half(), self.args.max_disp//4, self.cv_group, normalize=self.gwc_normalize)
     post_inputs = feat_out
     post_inputs['gwc_volume'] = gwc_volume
     in_names = self.get_io_tensor_names(self.post_engine, trt.TensorIOMode.INPUT)
