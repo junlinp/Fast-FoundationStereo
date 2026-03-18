@@ -7,6 +7,11 @@
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import os,sys
+
+# Disable TorchDynamo / torch.compile to avoid Triton/Inductor on Jetson
+os.environ['TORCH_COMPILE_DISABLE'] = '1'
+os.environ['TORCHDYNAMO_DISABLE'] = '1'
+
 code_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(f'{code_dir}/../')
 from omegaconf import OmegaConf

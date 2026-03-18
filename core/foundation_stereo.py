@@ -129,7 +129,7 @@ class hourglass(nn.Module):
         else:
           conv = self.post8_to_4(x, conv)
 
-        # Ensure 5D so ONNX If branches match: [1,48,120,216] -> [1,1,48,120,216]
+        # Return 5D (B, C, D, H, W) for classifier
         if conv.dim() == 4:
           conv = conv.unsqueeze(1)
         return conv
@@ -344,9 +344,8 @@ class TrtPostRunner(nn.Module):
     comb_volume = self.corr_feature_att(comb_volume, features_left_04)
     comb_volume = self.cost_agg(comb_volume, features_left)
 
-    # Init disp from geometry encoding volume (keep 5D until disparity_regression for ONNX If shape match)
     logits = self.classifier(comb_volume)  # (B, 1, D, H, W)
-    prob = F.softmax(logits.squeeze(1), dim=1)
+    prob = F.softmax(logits[:, 0], dim=1)
     init_disp = disparity_regression(prob, self.args.max_disp//4)
 
     cnet_list = self.cnet(features_left[0], features_left[1], features_left[2])

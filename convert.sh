@@ -8,8 +8,8 @@ python scripts/run_demo.py \
    --denoise_cloud 0 \
    --scale 1 \
    --get_pc 0 \
-   --valid_iters 8 \
-   --max_disp 192 \
+   --valid_iters 4 \
+   --max_disp 48 \
    --zfar 100
 
 # 480x848 input, padded to 480x864 (nearest multiple of 32)
@@ -19,22 +19,22 @@ python scripts/make_onnx.py \
   --save_path output/480x864 \
   --height 480 \
   --width 864 \
-  --valid_iters 8 \
-  --max_disp 192
+  --valid_iters 4 \
+  --max_disp 48
 
 #trtexec --onnx=output/480x864/feature_runner.onnx --saveEngine=output/480x864/feature_runner.engine  --useCudaGraph
 #trtexec --onnx=output/480x864/post_runner.onnx --saveEngine=output/480x864/post_runner.engine   --useCudaGraph
 
-python scripts/run_demo_tensorrt.py \
-  --onnx_dir output/480x864/ \
-  --left_file test_data/left.png \
-  --right_file test_data/right.png \
-  --intrinsic_file test_data/K.txt \
-  --out_dir output/trt_inference_480x864/ \
-  --remove_invisible 0 \
-  --denoise_cloud 0 \
-  --get_pc 0 \
-  --zfar 100 
+# python scripts/run_demo_tensorrt.py \
+#   --onnx_dir output/480x864/ \
+#   --left_file test_data/left.png \
+#   --right_file test_data/right.png \
+#   --intrinsic_file test_data/K.txt \
+#   --out_dir output/trt_inference_480x864/ \
+#   --remove_invisible 0 \
+#   --denoise_cloud 0 \
+#   --get_pc 0 \
+#   --zfar 100 
 
 # single ONNX export (BuildGwcVolume custom plugin op)
 python scripts/make_onnx.py \
@@ -42,7 +42,7 @@ python scripts/make_onnx.py \
   --save_path output/480x864 \
   --height 480 \
   --width 864 \
-  --valid_iters 8 \
+  --valid_iters 4 \
   --max_disp 192 \
   --single
 

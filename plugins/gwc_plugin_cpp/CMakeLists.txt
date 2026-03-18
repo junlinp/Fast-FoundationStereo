@@ -42,3 +42,15 @@ target_link_libraries(GwcVolumePlugin nvinfer cudart)
 
 set_property(TARGET GwcVolumePlugin PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 set_property(TARGET GwcVolumePlugin PROPERTY POSITION_INDEPENDENT_CODE ON)
+
+# Standalone benchmark for the GWC CUDA kernel
+add_executable(bench_gwc
+    bench_gwc.cu
+    build_gwc_kernel.cu
+)
+
+target_link_libraries(bench_gwc
+    cudart
+)
+
+set_property(TARGET bench_gwc PROPERTY CUDA_SEPARABLE_COMPILATION ON)

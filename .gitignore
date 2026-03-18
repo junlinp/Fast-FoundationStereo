@@ -13,3 +13,7 @@ output/
 output_onnx*/
 .claude/
 plugins/gwc_plugin_cpp/build/
+
+# Profiling / trace artifacts
+*.nsys-rep
+*.sqlite
