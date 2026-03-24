@@ -35,10 +35,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 
-def visualize_disparity(disp, max_disp=192):
+def visualize_disparity(disp, target_h=None, target_w=None, max_disp=192):
     """Convert disparity to colorized visualization.
-    disp: (H, W) tensor
-    Returns: (H, W, 3) numpy array in RGB
+    disp: (H, W) tensor or (B, 1, H, W)
+    target_h, target_w: target dimensions to resize to
+    Returns: (H, W, 3) numpy array in RGB, resized if target dims provided
     """
     if isinstance(disp, torch.Tensor):
         disp = disp.detach().cpu().numpy()
@@ -52,10 +53,14 @@ def visualize_disparity(disp, max_disp=192):
     else:
         disp_norm = disp * 0
     
-    # Apply colormap (turbo colormap - better for stereo)
+    # Apply colormap
     disp_uint8 = (disp_norm * 255).astype(np.uint8)
     colorized = cv2.applyColorMap(disp_uint8, cv2.COLORMAP_TURBO)
     colorized = cv2.cvtColor(colorized, cv2.COLOR_BGR2RGB)
+    
+    # Resize if target dimensions provided
+    if target_h is not None and target_w is not None:
+        colorized = cv2.resize(colorized, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
     
     return colorized
 
@@ -82,12 +87,12 @@ def log_disparity_to_wandb(student_disp, teacher_disp, left_img, step, max_disp=
     left_np = (left_np * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406]))
     left_np = (left_np * 255).clip(0, 255).astype(np.uint8)
     
-    # Create visualizations
-    student_vis = visualize_disparity(student_np, max_disp)
-    teacher_vis = visualize_disparity(teacher_np, max_disp)
+    # Create visualizations (resize to match left image at full res)
+    h, w = left_np.shape[:2]
+    student_vis = visualize_disparity(student_np, h, w, max_disp)
+    teacher_vis = visualize_disparity(teacher_np, h, w, max_disp)
     
     # Stack side by side: left, teacher, student
-    h, w = student_vis.shape[:2]
     combined = np.zeros((h, w * 3 + 10 * 2, 3), dtype=np.uint8)
     combined[:, :w] = left_np
     combined[:, w + 10:w + 10 + w] = teacher_vis
